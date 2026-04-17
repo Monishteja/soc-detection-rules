@@ -1,0 +1,18 @@
+# DNS Exfiltration Detection
+
+## Detection Criteria
+1. DNS queries with abnormally long subdomains (>50 chars)
+2. High label count (>5 dots in domain)
+3. High Shannon entropy (>4.0) indicating random/encoded data
+4. Burst of queries (>20 in 5 minutes)
+
+## False Positives
+- CDN services (akamai, cloudfront) - whitelist known patterns
+- Certificate transparency logs
+- Legitimate base64-encoded tracking parameters
+
+## Tuning
+```kql
+| where Name !contains "akamaitechnologies.com"
+| where Name !contains "cloudfront.net"
+```
