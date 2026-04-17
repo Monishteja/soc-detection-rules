@@ -1,0 +1,99 @@
+```
+[Kerberoasting Detection - T1558.003]
+description = Detects potential Kerberoasting attacks through TGS requests using weak RC4 encryption targeting multiple SPNs
+search = index=windows EventCode=4769 \
+| where ServiceName!="*$" \
+| where TicketEncryptionType="0x17" \
+| bin _time span=10m \
+| stats \
+    count as tgs_requests, \
+    dc(ServiceName) as unique_spns, \
+    values(ServiceName) as target_spns, \
+    values(TicketEncryptionType) as encryption_types, \
+    dc(src_ip) as unique_source_ips, \
+    values(src_ip) as source_ips \
+    by _time, Account_Name, Computer \
+| where tgs_requests > 10 AND unique_spns > 5 \
+| eval risk_score = (tgs_requests * 3) + (unique_spns * 10) \
+| eval severity = case( \
+    risk_score >= 150, "Critical", \
+    risk_score >= 100, "High", \
+    risk_score >= 50, "Medium", \
+    1=1, "Low") \
+| eval mitre_attack = "T1558.003 - Kerberoasting" \
+| eval description = "Potential Kerberoasting: ".Account_Name." requested TGS for ".unique_spns." service accounts using RC4 encryption" \
+| table _time, Account_Name, Computer, tgs_requests, unique_spns, target_spns, encryption_types, source_ips, risk_score, severity, mitre_attack, description \
+| sort - risk_score
+dispatch.earliest_time = -20m
+dispatch.latest_time = now
+cron_schedule = */10 * * * *
+enableSched = 1
+alert.severity = 4
+alert.track = 1
+
+# DETECTION LOGIC:
+# 1. EventCode 4769 = Kerberos TGS request
+# 2. ServiceName NOT ending with '$' = User accounts (not computer accounts)
+# 3. TicketEncryptionType 0x17 = RC4 (weak, preferred by attackers)
+# 4. Multiple SPNs targeted in short time = enumeration behavior
+
+# TUNING PARAMETERS:
+# - tgs_requests > 10: Number of TGS requests in time window
+#   * Adjust based on environment:
+#     - Small: 5-8 requests
+#     - Medium: 10-15 requests
+#     - Large: 15-20 requests
+#
+# - unique_spns > 5: Number of different service accounts targeted
+#   * Adjust based on legitimate service account count
+#
+# - Time window (10m): Can be adjusted
+#   * Fast attack: 5 minutes
+#   * Stealthy attack: 20-30 minutes
+
+# FALSE POSITIVES:
+# 1. Legitimate service accounts requesting multiple TGS tickets
+#    Whitelist: | where NOT (Account_Name IN ("svc_automation", "svc_monitoring"))
+#
+# 2. Helpdesk/admin tools that legitimately access multiple services
+#    Whitelist: | where NOT (Computer IN ("helpdesk-*", "admin-*"))
+#
+# 3. Known automation scripts during business hours
+#    Time-based whitelist: | where NOT (date_hour>=9 AND date_hour<=17 AND Account_Name="svc_script")
+
+# RECOMMENDED ACTIONS:
+# 1. Immediate: Investigate user account activity
+# 2. Check: Recent password changes for targeted SPNs
+# 3. Verify: Account_Name has legitimate need to access these services
+# 4. Escalate: If Account_Name is compromised, initiate IR playbook
+
+# BASELINE ANALYSIS:
+# Run this to understand normal TGS patterns:
+# index=windows EventCode=4769 earliest=-30d
+# | stats avg(count) as avg_tgs, max(count) as max_tgs, dc(ServiceName) as avg_unique_spns by Account_Name
+# | where avg_tgs > 5
+# | table Account_Name, avg_tgs, max_tgs, avg_unique_spns
+# | sort - avg_tgs
+
+# TEST DATA:
+# Simulate Kerberoasting attack:
+# | makeresults count=15
+# | eval _time=now()-(_time*60)
+# | eval EventCode=4769
+# | eval Account_Name="testuser"
+# | eval Computer="DESKTOP-01"
+# | eval ServiceName="svc_sql".tostring(random()%10)
+# | eval TicketEncryptionType="0x17"
+# | eval src_ip="192.168.1.100"
+# | table _time, EventCode, Account_Name, Computer, ServiceName, TicketEncryptionType, src_ip
+
+# EXPECTED BEHAVIOR:
+# Normal: 1-3 TGS requests for 1-2 SPNs per user per hour
+# Suspicious: 10+ TGS requests for 5+ different SPNs in 10 minutes
+# Attack: 20+ TGS requests for 10+ SPNs (targeting entire environment)
+
+# RELATED DETECTIONS:
+# - Monitor for password spray after Kerberoasting
+# - Check for credential dumping (Mimikatz) on source computer
+# - Alert on privilege escalation attempts from Account_Name
+```

@@ -1,0 +1,43 @@
+```
+[Suspicious RDP Connections - T1021.001]
+description = Detects suspicious RDP connections from unusual locations or after-hours access
+search = index=windows (EventCode=4624 OR EventCode=4625) Logon_Type=10 \
+| bin _time span=15m \
+| eval hour=strftime(_time, "%H") \
+| eval day_of_week=strftime(_time, "%w") \
+| stats \
+    count as connection_attempts, \
+    dc(src_ip) as unique_source_ips, \
+    values(src_ip) as source_ips, \
+    dc(Workstation_Name) as unique_workstations, \
+    values(Workstation_Name) as workstations, \
+    values(Account_Name) as accounts \
+    by _time, dest, hour, day_of_week \
+| eval is_after_hours = if((hour < 6 OR hour > 20) OR (day_of_week=0 OR day_of_week=6), 1, 0) \
+| eval is_multiple_sources = if(unique_source_ips > 3, 1, 0) \
+| eval risk_score = (connection_attempts * 2) + (unique_source_ips * 10) + (is_after_hours * 20) \
+| where risk_score > 30 OR is_after_hours=1 AND unique_source_ips > 1 \
+| eval severity = case( \
+    risk_score >= 80, "Critical", \
+    risk_score >= 50, "High", \
+    risk_score >= 30, "Medium", \
+    1=1, "Low") \
+| eval mitre_attack = "T1021.001 - Remote Desktop Protocol" \
+| eval description = "Suspicious RDP: ".connection_attempts." attempts from ".unique_source_ips." IPs".if(is_after_hours=1, " (After Hours)", "") \
+| table _time, dest, accounts, connection_attempts, unique_source_ips, source_ips, workstations, hour, is_after_hours, risk_score, severity, mitre_attack, description \
+| sort - risk_score
+dispatch.earliest_time = -20m
+dispatch.latest_time = now
+cron_schedule = */15 * * * *
+enableSched = 1
+
+# DETECTION LOGIC:
+# - EventCode 4624/4625 with Logon_Type=10 (RDP)
+# - After-hours connections (before 6 AM or after 8 PM, weekends)
+# - Multiple source IPs targeting single dest
+# - Unusual connection patterns
+
+# TUNING:
+# Adjust after-hours window: hour < 6 OR hour > 20
+# Adjust unique_source_ips threshold based on VPN usage
+# Add whitelist for known admin IPs

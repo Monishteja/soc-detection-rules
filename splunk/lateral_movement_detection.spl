@@ -1,0 +1,34 @@
+```
+[Lateral Movement Detection - T1021]
+description = Detects lateral movement through admin share access, PsExec, and remote service creation
+search = index=windows (EventCode=5140 OR EventCode=4697 OR EventCode=7045 OR EventCode=4688) \
+| eval is_admin_share = if(Share_Name IN ("\\*\\ADMIN$", "\\*\\C$", "\\*\\IPC$"), 1, 0) \
+| eval is_psexec = if(like(Process_Name, "%psexec%") OR Service_Name="PSEXESVC", 1, 0) \
+| eval is_remote_service = if(EventCode=7045 OR EventCode=4697, 1, 0) \
+| where is_admin_share=1 OR is_psexec=1 OR is_remote_service=1 \
+| bin _time span=10m \
+| stats \
+    count as event_count, \
+    dc(dest) as unique_targets, \
+    values(dest) as target_systems, \
+    values(Share_Name) as shares_accessed, \
+    values(Service_Name) as services_created, \
+    values(Process_Name) as processes_executed, \
+    dc(Account_Name) as unique_accounts, \
+    values(Account_Name) as accounts_used \
+    by _time, src_ip, src_host \
+| where unique_targets >= 3 OR (is_psexec=1 AND unique_targets >= 2) \
+| eval risk_score = (unique_targets * 15) + (event_count * 3) + (unique_accounts * 10) \
+| eval severity = case( \
+    risk_score >= 100, "Critical", \
+    risk_score >= 60, "High", \
+    risk_score >= 30, "Medium", \
+    1=1, "Low") \
+| eval mitre_attack = "T1021 - Remote Services, T1021.002 - SMB/Windows Admin Shares" \
+| table _time, src_host, src_ip, unique_targets, target_systems, event_count, shares_accessed, services_created, processes_executed, accounts_used, risk_score, severity, mitre_attack \
+| sort - risk_score
+dispatch.earliest_time = -15m
+dispatch.latest_time = now
+cron_schedule = */10 * * * *
+enableSched = 1
+alert.severity = 5

