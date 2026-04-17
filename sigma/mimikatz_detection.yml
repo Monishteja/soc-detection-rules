@@ -1,0 +1,27 @@
+title: Mimikatz Execution Detection via Command Line
+id: a642964e-bead-4bed-8910-1bb4d63e3b4d
+status: stable
+description: Detects potential Mimikatz execution through command-line patterns
+author: Monish Teja Kolli
+date: 2025/04/16
+modified: 2025/04/16
+tags:
+    - attack.credential_access
+    - attack.t1003.001
+    - attack.t1003.002
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains:
+            - 'sekurlsa::logonpasswords'
+            - 'sekurlsa::tickets'
+            - 'kerberos::golden'
+            - 'lsadump::sam'
+            - 'privilege::debug'
+    condition: selection
+falsepositives:
+    - Security assessment tools
+    - Penetration testing (if authorized)
+level: high
